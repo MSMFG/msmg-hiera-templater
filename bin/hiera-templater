@@ -1,0 +1,67 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'optparse'
+require_relative '../lib/hiera_template'
+
+args = { config: HieraTemplate::DEFAULT_CONFIG }
+opt_parser = OptionParser.new do |opts|
+  opts.banner = <<~USAGE
+    Usage: #{File.basename(__FILE__)} [options] <file/folder>
+
+    Processes a specific .erb template or a folder hierarchy for .erb files.
+    Note that only files named with an .erb suffix will be processed and the output file will match the
+    name but with the suffix removed.
+
+    The erb files in the folder must use hiera('key') to retrieve a data item.
+  USAGE
+
+  opts.on('-c CONFIG_FILE', '--config=CONFIG_FILE', String,
+          "hiera configuration file (default #{args[:config]})") do |c|
+    args[:config] = c
+  end
+
+  opts.on('-r', '--recurse', TrueClass, 'Recurse a specified folder rather than specify a file name') do |n|
+    args[:recurse] = n
+  end
+
+  opts.on('-f', '--force', TrueClass, 'Force overwrite if output file exists') do |f|
+    args[:overwrite] = f
+  end
+
+  opts.on('-h', '--help', 'Prints this help') do
+    puts opts
+    exit
+  end
+end
+opt_parser.parse!
+name = ARGV.shift
+unless name && ((File.directory?(name) && args[:recurse]) || (File.exist?(name) && File.extname(name) == '.erb'))
+  puts opt_parser.help
+  exit 1
+end
+templater = HieraTemplate.new(args[:config])
+
+def strip_suffix(file, args)
+  new_file = File.join(File.dirname(file), File.basename(file, '.erb'))
+  return new_file if args[:overwrite] || !File.exist?(new_file)
+
+  abort "#{new_file} already exists (based on template #{file})"
+end
+
+def process_file(templater, file, args)
+  content = File.read(file)
+  output = templater.render(content)
+  return unless output.is_a?(String) # Detect custom output
+
+  out_file = strip_suffix(file, args)
+  File.write(out_file, output)
+end
+
+if args[:recurse]
+  Dir.glob(File.join(name, '**', '*.erb')) do |file|
+    process_file(templater, file, args)
+  end
+else
+  process_file(templater, name, args)
+end
